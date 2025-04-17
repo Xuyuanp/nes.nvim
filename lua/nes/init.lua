@@ -264,16 +264,17 @@ local function parse_suggestion(ctx, next_version)
 		local win_id = vim.fn.win_findbuf(ctx.bufnr)[1]
 		local offset = vim.fn.getwininfo(win_id)[1].textoff
 		local preview_winnr = vim.api.nvim_open_win(preview_bufnr, false, {
-			relative = "win",
+			relative = "cursor",
 			width = vim.o.columns - offset,
 			height = #added_lines,
-			row = text_edit.range["end"].line,
-			col = offset,
+			row = text_edit.range["end"].line - ctx.current_version.cursor[1] + 1,
+			col = 0,
 			style = "minimal",
 			border = "none",
 		})
 		vim.wo[preview_winnr].number = false
 		vim.wo[preview_winnr].winhighlight = "Normal:NesAdd"
+		vim.wo[preview_winnr].winblend = 0
 
 		vim.b[ctx.bufnr].preview_winnr = preview_winnr
 	end
