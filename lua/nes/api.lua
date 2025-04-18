@@ -21,7 +21,6 @@ local function get_oauth_token()
 
 	for _, path in pairs(config_paths) do
 		local config_path = vim.fs.joinpath(config_dir, path)
-		print(config_path)
 		if vim.uv.fs_stat(config_path) then
 			local data = vim.fn.readfile(config_path, "")
 			if vim.islist(data) then
