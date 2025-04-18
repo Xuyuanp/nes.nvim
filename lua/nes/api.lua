@@ -13,17 +13,26 @@ local function get_oauth_token()
 	end
 
 	local config_dir = vim.env.XDG_CONFIG_HOME or vim.fs.joinpath(vim.env.HOME, "/.config")
-	local config_path = vim.fs.joinpath(config_dir, "github-copilot/apps.json")
-	if vim.uv.fs_stat(config_path) then
-		local data = vim.fn.readfile(config_path, "")
-		if vim.islist(data) then
-			data = table.concat(data, "\n")
-		end
-		local apps = vim.json.decode(data)
-		for key, value in pairs(apps) do
-			if vim.startswith(key, "github.com") then
-				_oauth_token = value.oauth_token
-				return _oauth_token
+
+	local config_paths = {
+		"github-copilot/apps.json",
+		"github-copilot/hosts.json",
+	}
+
+	for _, path in pairs(config_paths) do
+		local config_path = vim.fs.joinpath(config_dir, path)
+		print(config_path)
+		if vim.uv.fs_stat(config_path) then
+			local data = vim.fn.readfile(config_path, "")
+			if vim.islist(data) then
+				data = table.concat(data, "\n")
+			end
+			local apps = vim.json.decode(data)
+			for key, value in pairs(apps) do
+				if vim.startswith(key, "github.com") then
+					_oauth_token = value.oauth_token
+					return _oauth_token
+				end
 			end
 		end
 	end
