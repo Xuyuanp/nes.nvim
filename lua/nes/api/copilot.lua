@@ -1,14 +1,57 @@
 local nvim_version = vim.version()
 local Curl = require("nes.util").Curl
 
-local M = {}
+---@private
+---@class ApiToken
+---@field token string
+---@field endpoints {proxy: string?, api: string}
+---@field expires_at integer
 
-local _oauth_token
-local _api_token
+---@class nes.api.adapter.Copilot
+---@field private _opts? table
+---@field private _oauth_token? string
+---@field private _api_token? ApiToken
+local Copilot = {}
+Copilot.__index = Copilot
 
-local function get_oauth_token()
-    if _oauth_token then
-        return _oauth_token
+local default_opts = {
+    token_endpoint = "https://api.github.com/copilot_internal/v2/token",
+    params = {
+        model = "copilot-nes-v",
+        temperature = 0,
+        top_p = 1,
+        n = 1,
+        stream = true,
+        snippy = {
+            enabled = false,
+        },
+    },
+}
+
+---@return nes.api.adapter.Copilot
+function Copilot.new(opts)
+    opts = vim.tbl_deep_extend("force", default_opts, opts or {})
+    local self = {
+        _opts = opts,
+    }
+    setmetatable(self, Copilot)
+    return self
+end
+
+---@private
+---@param messages nes.api.chat_completions.Message[]
+---@return table
+function Copilot:_payload(messages)
+    local payload = vim.deepcopy(self._opts.params)
+    payload.messages = messages
+    return payload
+end
+
+---@private
+---@return string?
+function Copilot:_get_oauth_token()
+    if self._oauth_token then
+        return self._oauth_token
     end
 
     local config_dir = vim.env.XDG_CONFIG_HOME or vim.fs.joinpath(vim.env.HOME, "/.config")
@@ -28,27 +71,29 @@ local function get_oauth_token()
             local apps = vim.json.decode(data)
             for key, value in pairs(apps) do
                 if vim.startswith(key, "github.com") then
-                    _oauth_token = value.oauth_token
-                    return _oauth_token
+                    self._oauth_token = value.oauth_token
+                    return self._oauth_token
                 end
             end
         end
     end
 end
 
-local function with_token(cb)
-    if _api_token and _api_token.expires_at > os.time() + 60 then
-        cb(nil, _api_token)
+---@private
+---@param cb fun(err: string?, api_token?: ApiToken)
+function Copilot:_with_token(cb)
+    if self._api_token and self._api_token.expires_at > os.time() + 5 then
+        cb(nil, self._api_token)
         return
     end
 
-    local oauth_token = get_oauth_token()
+    local oauth_token = self:_get_oauth_token()
     if not oauth_token then
         cb("OAuth token not found")
         return
     end
 
-    return Curl.get("https://api.github.com/copilot_internal/v2/token", {
+    return Curl.get(self._opts.token_endpoint, {
         headers = {
             Authorization = "Bearer " .. oauth_token,
             ["Accept"] = "application/json",
@@ -59,13 +104,13 @@ local function with_token(cb)
                 cb(out.stderr or out.stdout or ("code: " .. out.code))
                 return
             end
-            _api_token = vim.json.decode(out.stdout)
-            cb(nil, _api_token)
+            self._api_token = vim.json.decode(out.stdout)
+            cb(nil, self._api_token)
         end,
     })
 end
 
-function M._call(base_url, api_key, payload, callback)
+function Copilot:_call(base_url, api_key, messages, callback)
     return Curl.post(base_url .. "/chat/completions", {
         headers = {
             Authorization = "Bearer " .. api_key,
@@ -75,14 +120,30 @@ function M._call(base_url, api_key, payload, callback)
             ["editor-version"] = ("Neovim/%d.%d.%d"):format(nvim_version.major, nvim_version.minor, nvim_version.patch),
             ["editor-plugin-version"] = "nes/0.1.0",
         },
-        body = vim.json.encode(payload),
+        body = vim.json.encode(self:_payload(messages)),
         on_exit = function(out)
             if out.code ~= 0 then
-                callback("")
-                require("nes.util").notify(out.stderr or ("code: " .. out.code), { level = vim.log.levels.ERROR })
+                callback({ message = out.stderr or ("code: " .. out.code) })
                 return
             end
+
             local stdout = out.stdout
+
+            if not self._opts.params.stream then
+                local rsp = vim.json.decode(stdout)
+                if rsp.choices and rsp.choices[1] then
+                    local choice = rsp.choices[1]
+                    if choice.message and choice.message.content then
+                        callback(nil, choice.message.content)
+                    else
+                        callback({ message = "No content in response" })
+                    end
+                else
+                    callback({ message = "Invalid response format" })
+                end
+                return
+            end
+
             local lines = vim.split(stdout, "\n", { plain = true })
             local chunks = {}
             for _, line in ipairs(lines) do
@@ -96,11 +157,10 @@ function M._call(base_url, api_key, payload, callback)
                     end
                 end
             end
-
             local json_chunks = string.format("[%s]", table.concat(chunks, ","))
             local ok, events = pcall(vim.json.decode, json_chunks)
             if not ok then
-                callback("")
+                callback({ message = "Failed to decode json: " .. (events or "unknown error") })
                 return
             end
 
@@ -113,36 +173,33 @@ function M._call(base_url, api_key, payload, callback)
                     end
                 end
             end
-            callback(output)
+            callback(nil, output)
         end,
     })
 end
 
+---@param messages nes.api.chat_completions.Message[]
+---@param callback nes.api.Callback
 ---@return fun() cancel
-function M.call(payload, callback)
+function Copilot:call(messages, callback)
     local job
-    job = with_token(vim.schedule_wrap(function(err, api_token)
+    job = self:_with_token(vim.schedule_wrap(function(err, api_token)
+        job = nil
         if err then
-            require("nes.util").notify(
-                "Failed to get API token: " .. vim.inspect(err),
-                { level = vim.log.levels.ERROR }
-            )
-            callback("")
+            callback(err)
             return
         end
-        local base_url = api_token.endpoints.proxy or api_token.endpoints.api
-        job = M._call(base_url, api_token.token, payload, callback)
-    end))
+        --TODO: deal with nil api_token
 
+        local base_url = api_token.endpoints.proxy or api_token.endpoints.api
+        job = self:_call(base_url, api_token.token, messages, callback)
+    end))
     return function()
         if job then
             job:kill(-1)
+            job = nil
         end
     end
 end
 
-function M.debug()
-    vim.print(_api_token)
-end
-
-return M
+return Copilot
