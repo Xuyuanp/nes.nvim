@@ -115,6 +115,20 @@ function M.text_edits_from_diff(a, b, opts)
             return
         end
         if count_b > 0 then
+            if start_a == 0 then
+                local edit = {
+                    range = {
+                        start = { line = opts.line_offset, character = 0 },
+                        ["end"] = {
+                            line = opts.line_offset,
+                            character = 0,
+                        },
+                    },
+                    newText = "\n" .. table.concat(vim.list_slice(new_lines, start_b, start_b + count_b - 1), "\n"),
+                }
+                table.insert(res, edit)
+                return
+            end
             -- add lines
             local edit = {
                 range = {

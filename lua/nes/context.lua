@@ -18,6 +18,7 @@ When responding to the programmer, you must follow these rules:
 - Do not alter method signatures, add or remove return values, or modify existing logic unless explicitly instructed.
 - The current cursor position is indicated by <|cursor|>. You MUST keep the cursor position the same in your response.
 - DO NOT REMOVE <|cursor|>.
+- Avoid adding unnecessary text, such as comments.
 - You must ONLY reply using the tag: <next-version>.
 ]]
 
@@ -59,16 +60,6 @@ what I will do next. Do not skip any lines. Do not be lazy.
 local Context = {}
 Context.__index = Context
 
----@return nes.Context
-function Context.new_from_buffer(bufnr)
-    local filename = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ":")
-    local original_code = table.concat(vim.fn.readfile(filename, ""), "\n")
-    local current_code = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
-    local cursor = vim.api.nvim_win_get_cursor(0)
-    local filetype = vim.bo[bufnr].filetype
-    return Context.new(filename, original_code, current_code, cursor, filetype)
-end
-
 ---@param filename string
 ---@param original_code string
 ---@param current_code string
@@ -98,7 +89,6 @@ function Context.new(filename, original_code, current_code, cursor, lang)
 end
 
 function Context:payload()
-    -- copy from vscode
     return {
         messages = {
             {
@@ -107,21 +97,9 @@ function Context:payload()
             },
             {
                 role = "user",
-                content = UserPromptTemplate:format(
-                    self.filename,
-                    self.original_code,
-                    self.filename,
-                    self.filename,
-                    self.edits,
-                    self.filename,
-                    self.filetype,
-                    self.current_version.text
-                ),
+                content = self:user_prompt(),
             },
         },
-        model = "copilot-nes-v",
-        temperature = 0,
-        top_p = 1,
         prediction = {
             type = "content",
             content = string.format(
@@ -130,12 +108,21 @@ function Context:payload()
                 self.current_version.text
             ),
         },
-        n = 1,
-        stream = true,
-        snippy = {
-            enabled = false,
-        },
     }
+end
+
+---@return string
+function Context:user_prompt()
+    return UserPromptTemplate:format(
+        self.filename,
+        self.original_code,
+        self.filename,
+        self.filename,
+        self.edits,
+        self.filename,
+        self.filetype,
+        self.current_version.text
+    )
 end
 
 function Context._get_current_version(text, cursor)
@@ -158,11 +145,11 @@ function Context._get_current_version(text, cursor)
         start_col = start_col,
         end_col = end_col,
         text = string.format(
-            "%s\n%s<|cursor|>%s\n%s",
-            table.concat(before_cursor_lines, "\n"),
+            "%s%s<|cursor|>%s%s",
+            #before_cursor_lines > 0 and (table.concat(before_cursor_lines, "\n") .. "\n") or "",
             before_cursor_text,
             after_cursor_text,
-            table.concat(after_cursor_lines, "\n")
+            #after_cursor_lines > 0 and ("\n" .. table.concat(after_cursor_lines, "\n")) or ""
         ),
     }
     return res
