@@ -8,8 +8,6 @@ local Methods = vim.lsp.protocol.Methods
 
 ---@alias nes.Workspace table<string, nes.DocumentState>
 
----@alias nes.MethodHandler fun(server:nes.Server, params: any, callback?: fun(lsp.ResponseError?, any), message_id?: integer)
-
 ---@alias nes.InlineEditFilter  fun(edit: lsp.TextEdit): boolean
 
 ---@class nes.Server
@@ -17,11 +15,10 @@ local Methods = vim.lsp.protocol.Methods
 ---@field private _workspace nes.Workspace
 ---@field private _initialized boolean
 ---@field private _client_initialized boolean
----@field private _running boolean
+---@field private _closing boolean
 ---@field private _filters nes.InlineEditFilter[]
----@field private _inflights table<integer, fun()>
+---@field private _inflights table<integer, fun()> -- message_id -> cancel function
 ---@field private _next_message_id integer
----@field private _handlers table<string, nes.MethodHandler>
 local Server = {}
 Server.__index = Server
 
@@ -44,7 +41,7 @@ function Server.new(dispatchers)
         _workspace = {},
         _next_message_id = 1,
         _initialized = false,
-        _running = true,
+        _closing = false,
         _inflights = {},
         _filters = {
             -- no more than 3 lines edit
@@ -55,17 +52,6 @@ function Server.new(dispatchers)
                 return #vim.split(edit.newText, "\n") < 3
             end,
         },
-        _handlers = {
-            [Methods.initialize] = Server.on_initialize,
-            [Methods.initialized] = Server.on_initialized,
-            [Methods.textDocument_didOpen] = Server.on_did_open,
-            [Methods.textDocument_didSave] = Server.on_did_save,
-            [Methods.textDocument_didChange] = Server.on_did_change,
-            [Methods.textDocument_didClose] = Server.on_did_close,
-            [Methods.dollar_cancelRequest] = Server.on_cancel_request,
-
-            ["textDocument/copilotInlineEdit"] = Server.on_inline_edit,
-        },
     }, Server)
     return self
 end
@@ -74,10 +60,10 @@ end
 function Server:new_public_client()
     return {
         request = function(...)
-            return self:request(...)
+            return self:on_request(...)
         end,
         notify = function(...)
-            return self:notify(...)
+            return self:on_notify(...)
         end,
         is_closing = function()
             return self:is_closing()
@@ -90,35 +76,40 @@ end
 
 --- Receives a request from the LSP client
 ---
----@param method vim.lsp.protocol.Method | string The invoked LSP method
+---@param method vim.lsp.protocol.Method.ClientToServer The invoked LSP method
 ---@param params table? Parameters for the invoked LSP method
 ---@param callback fun(err: lsp.ResponseError?, result: any) Callback to invoke
 ---@param notify_reply_callback? fun(message_id: integer) Callback to invoke as soon as a request is no longer pending
----@return boolean success `true` if request could be sent, `false` if not
----@return integer? message_id if request could be sent, `nil` if not
-function Server:request(method, params, callback, notify_reply_callback)
+---@return boolean success
+---@return integer? message_id
+function Server:on_request(method, params, callback, notify_reply_callback)
+    if self._closing then
+        return false
+    end
+
+    if method ~= Methods.initialize and not self._client_initialized then
+        vim.notify("client not iniitialized: " .. method, vim.log.levels.WARN)
+        return false
+    end
+
     notify_reply_callback = notify_reply_callback or function() end
 
-    local handler = self._handlers[method]
+    local handler = self[method]
     if not handler then
-        vim.notify("No handler for method: " .. method, vim.log.levels.WARN)
+        vim.notify("method not support: " .. method, vim.log.levels.WARN)
         return false
     end
     local message_id = self:new_message_id()
 
-    vim.schedule(function()
-        handler(
-            self,
-            params,
-            vim.schedule_wrap(function(err, result)
-                callback(err, result)
-                if not err then
-                    notify_reply_callback(message_id)
-                end
-            end),
-            message_id
-        )
+    handler = vim.schedule_wrap(handler)
+    local wrapped_cb = vim.schedule_wrap(function(err, result)
+        callback(err, result)
+        if not err then
+            notify_reply_callback(message_id)
+        end
     end)
+    handler(self, params, wrapped_cb, message_id)
+
     return true, message_id
 end
 
@@ -126,10 +117,14 @@ end
 ---@param method string The invoked LSP method
 ---@param params table? Parameters for the invoked LSP method
 ---@return boolean
-function Server:notify(method, params)
+function Server:on_notify(method, params)
+    if self._closing then
+        return false
+    end
+
     method = method
     params = params
-    local handler = self._handlers[method]
+    local handler = self[method]
     if not handler then
         vim.notify("No handler for method: " .. method, vim.log.levels.WARN)
         return false
@@ -142,11 +137,11 @@ end
 
 ---@return boolean
 function Server:is_closing()
-    return false
+    return self._closing
 end
 
 function Server:terminate()
-    self._running = false
+    self._closing = true
     self._workspace = nil
 end
 
@@ -157,7 +152,7 @@ function Server:new_message_id()
 end
 
 ---@param params lsp.InitializeParams
-function Server:on_initialize(params, callback)
+Server[Methods.initialize] = function(self, params, callback)
     local _ = params
     ---@type lsp.InitializeResult
     local result = {
@@ -175,14 +170,14 @@ function Server:on_initialize(params, callback)
 end
 
 ---@param params lsp.InitializedParams
-function Server:on_initialized(params, callback)
+Server[Methods.initialized] = function(self, params, callback)
     local _ = params
     self._client_initialized = true
     callback()
 end
 
 ---@param params lsp.DidOpenTextDocumentParams
-function Server:on_did_open(params, callback)
+Server[Methods.textDocument_didOpen] = function(self, params, callback)
     self._workspace[params.textDocument.uri] = {
         original = params.textDocument,
         current = vim.deepcopy(params.textDocument),
@@ -191,7 +186,7 @@ function Server:on_did_open(params, callback)
 end
 
 ---@param params lsp.DidSaveTextDocumentParams
-function Server:on_did_save(params, callback)
+Server[Methods.textDocument_didSave] = function(self, params, callback)
     local state = self._workspace[params.textDocument.uri]
     if not state then
         callback({ code = 1, message = "no state" })
@@ -203,7 +198,7 @@ function Server:on_did_save(params, callback)
 end
 
 ---@param params lsp.DidChangeTextDocumentParams
-function Server:on_did_change(params, callback)
+Server[Methods.textDocument_didChange] = function(self, params, callback)
     local state = self._workspace[params.textDocument.uri]
     if not state then
         callback({ code = 1, message = "no state" })
@@ -220,13 +215,13 @@ function Server:on_did_change(params, callback)
 end
 
 ---@param params lsp.DidCloseTextDocumentParams
-function Server:on_did_close(params, callback)
+Server[Methods.textDocument_didClose] = function(self, params, callback)
     self._workspace[params.textDocument.uri] = nil
     callback()
 end
 
 ---@param params lsp.CancelParams
-function Server:on_cancel_request(params, callback)
+Server[Methods.dollar_cancelRequest] = function(self, params, callback)
     local cancel = self._inflights[params.id] or function() end
     cancel()
 
@@ -242,7 +237,7 @@ end
 ---@field textDocument lsp.VersionedTextDocumentIdentifier
 
 ---@param params nes.InlineEditParams
-function Server:on_inline_edit(params, callback, message_id)
+Server["textDocument/copilotInlineEdit"] = function(self, params, callback, message_id)
     for msg_id, cancel in pairs(self._inflights) do
         cancel()
         self._inflights[msg_id] = nil
