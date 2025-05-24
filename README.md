@@ -13,7 +13,6 @@ Features may be incomplete, bugs are likely to occur and breaking changes may oc
 
 - `curl` in your `PATH`
 - `github/copilot.vim` or `zbirenbaum/copilot.lua`: we don't depend on them directly, but you should sign in first
-- `nvim-lua/plenary.nvim`
 
 # Installation
 
@@ -22,10 +21,6 @@ Features may be incomplete, bugs are likely to occur and breaking changes may oc
 ```lua
 {
     'Xuyuanp/nes.nvim',
-    event = 'VeryLazy',
-    dependencies = {
-        'nvim-lua/plenary.nvim',
-    },
     opts = {},
 }
 
