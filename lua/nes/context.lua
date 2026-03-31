@@ -1,3 +1,5 @@
+local util = require("nes.util")
+
 local SystemPrompt = [[
 Keep your answers short and impersonal.
 The programmer will provide you with a set of recently viewed files, their recent edits, and a snippet of code that is being actively edited.
@@ -78,7 +80,7 @@ function Context.new(filename, original_code, current_code, cursor, lang)
                 :totable(),
             "\n"
         ),
-        edits = vim.diff(original_code, current_code, { algorithm = "minimal" }),
+        edits = util.diff(original_code, current_code, { algorithm = "minimal" }),
         filename = filename,
         current_version = Context._get_current_version(current_code, cursor),
         filetype = lang,

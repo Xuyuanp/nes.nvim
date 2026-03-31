@@ -42,9 +42,12 @@ end
 
 M.Curl = Curl
 
+---@diagnostic disable-next-line: deprecated
+M.diff = vim.text.diff or vim.diff
+
 ---@param a string
 ---@param b string
----@param opts? {line_offset?: integer, diff?: vim.diff.Opts}
+---@param opts? {line_offset?: integer, diff?: vim.text.diff.Opts}
 ---@return lsp.TextEdit[]
 function M.text_edits_from_diff(a, b, opts)
     local res = {}
@@ -147,7 +150,7 @@ function M.text_edits_from_diff(a, b, opts)
         assert(false, "unreachable")
     end
 
-    vim.diff(a, b, opts.diff)
+    M.diff(a, b, opts.diff)
 
     return res
 end
