@@ -279,6 +279,8 @@ function M.get_suggestion(bufnr)
 	local ctx = Context.new(bufnr)
 	local payload = ctx:payload()
 	require("nes.api").call(payload, function(stdout)
+    -- __AUTO_GENERATED_PRINT_VAR_START__
+    print([==[M.get_suggestion#(anon) stdout:]==], vim.inspect(stdout)) -- __AUTO_GENERATED_PRINT_VAR_END__
 		local next_version = vim.trim(stdout)
 		assert(next_version)
 		if not vim.startswith(next_version, "<next-version>") then

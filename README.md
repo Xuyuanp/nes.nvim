@@ -35,7 +35,18 @@ Features may be incomplete, bugs are likely to occur and breaking changes may oc
 
 # Configuration
 
-no configuration currently.
+You can configure the plugin to use OpenRouter (an OpenAI-compatible proxy) by passing options to `setup`:
+
+```lua
+require('nes').setup({
+  provider = 'openrouter',                  -- 'copilot' (default) or 'openrouter'
+  api_key = 'YOUR_OPENROUTER_API_KEY',      -- required for openrouter
+  base_url = 'https://api.openrouter.ai/v1', -- optional, default "https://api.openrouter.ai/v1"
+  model = 'gpt-3.5-turbo',                  -- optional, default "gpt-3.5-turbo" for openrouter, "copilot-nes-v" for copilot
+})
+```
+
+Leave `provider = 'copilot'` (or omit `provider`) to use GitHub Copilot.
 
 # Usage
 

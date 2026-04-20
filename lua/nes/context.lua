@@ -90,6 +90,31 @@ function Context.new(bufnr)
 	return self
 end
 
+---@class CurrentVersion
+---@field text string
+
+---@class Context
+---@field filename string
+---@field original_code string
+---@field edits string
+---@field filetype string
+---@field current_version CurrentVersion
+
+---@class Message
+---@field role string
+---@field content string
+
+---@class Payload
+---@field messages Message[]
+---@field model string
+---@field temperature number
+---@field top_p number
+---@field prediction {type: string, content: string}
+---@field n number
+---@field stream boolean
+---@field snippy {enabled: boolean}
+
+---@return Payload
 function Context:payload()
 	-- copy from vscode
 	return {

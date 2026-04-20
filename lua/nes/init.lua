@@ -1,7 +1,9 @@
 local M = {}
+M.opts = {}
 
 function M.setup(opts)
 	opts = opts or {}
+	M.opts = opts
 
 	vim.api.nvim_set_hl(0, "NesAdd", { link = "DiffAdd", default = true })
 	vim.api.nvim_set_hl(0, "NesDelete", { link = "DiffDelete", default = true })

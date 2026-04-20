@@ -62,6 +62,66 @@ local function get_api_token()
 end
 
 function M.call(payload, callback)
+	local pkg = require("nes")
+	local opts = pkg.opts or {}
+	if opts.provider == "openrouter" then
+		local api_key = opts.api_key or vim.env.OPENROUTER_API_KEY
+		if not api_key then
+			error("OpenRouter API key not found")
+		end
+		local base_url = opts.base_url
+			or vim.env.OPENROUTER_API_BASE_URL
+			or "https://openrouter.ai/api/v1/chat/completions"
+		local open_payload = {
+			model = opts.model or "gpt-3.5-turbo",
+			messages = payload.messages,
+			temperature = payload.temperature,
+			top_p = payload.top_p,
+			n = payload.n,
+			stream = true,
+		}
+    local output = ""
+
+    curl.post(base_url, {
+
+			headers = {
+				["Content-Type"] = "application/json",
+				["Authorization"] = "Bearer " .. api_key,
+			},
+			on_error = function(err)
+				error("openrouter request error: " .. err)
+			end,
+			body = vim.json.encode(open_payload),
+      stream = function(_, chunk)
+        if not chunk then
+          return
+        end
+        if vim.startswith(chunk, "data: ") then
+          chunk = chunk:sub(6)
+        end
+        if chunk == "[DONE]" then
+          return
+        end
+        local ok, event = pcall(vim.json.decode, chunk)
+        if not ok then
+          return
+        end
+        if event and event.choices and event.choices[1] then
+          local choice = event.choices[1]
+          if choice.delta and choice.delta.content then
+            output = output .. choice.delta.content
+          end
+        end
+      end,
+      callback = function()
+        callback(output)
+        -- __AUTO_GENERATED_PRINT_VAR_START__
+        print([==[M.call#if#callback output:]==], vim.inspect(output)) -- __AUTO_GENERATED_PRINT_VAR_END__
+      end,
+    })
+    return
+  end
+
 	local api_token = get_api_token()
 	local base_url = api_token.endpoints.proxy or api_token.endpoints.api
 
